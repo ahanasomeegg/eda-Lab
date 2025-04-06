@@ -68,6 +68,46 @@ export class EDAAppStack extends cdk.Stack {
 
   imagesBucket.grantRead(processImageFn);
 
+  //Add a second queue
+  const mailerQ = new sqs.Queue(this, "mailer-queue", {
+    receiveMessageWaitTime: cdk.Duration.seconds(10),
+  });
+
+  //Add a second lambda functio
+  const mailerFn = new lambdanode.NodejsFunction(this, "mailer-function", {
+    runtime: lambda.Runtime.NODEJS_16_X,
+    memorySize: 1024,
+    timeout: cdk.Duration.seconds(3),
+    entry: `${__dirname}/../lambdas/mailer.ts`,
+  });
+
+  //Make the new queue a subscriber to the SNS topic
+  newImageTopic.addSubscription(new subs.SqsSubscription(mailerQ));
+
+
+  //Create an event source from the new SQS queue
+  const newImageMailEventSource = new events.SqsEventSource(mailerQ, {
+    batchSize: 5,
+    maxBatchingWindow: cdk.Duration.seconds(5),
+  }); 
+
+  //Make the new event source the trigger for the new lambda function
+  mailerFn.addEventSource(newImageMailEventSource);
+
+  //Give the new lambda function permission to send emails using the SES service
+  mailerFn.addToRolePolicy(
+    new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: [
+        "ses:SendEmail",
+        "ses:SendRawEmail",
+        "ses:SendTemplatedEmail",
+      ],
+      resources: ["*"],
+    })
+  );
+
+
     // Output
     
     new cdk.CfnOutput(this, "bucketName", {
