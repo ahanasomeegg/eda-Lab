@@ -8,227 +8,186 @@ import * as sqs from "aws-cdk-lib/aws-sqs";
 import * as sns from "aws-cdk-lib/aws-sns";
 import * as subs from "aws-cdk-lib/aws-sns-subscriptions";
 import * as iam from "aws-cdk-lib/aws-iam";
-
+import { SubscriptionFilter } from "aws-cdk-lib/aws-sns";
 import { Construct } from "constructs";
-
-import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
-import { SES_EMAIL_FROM, SES_EMAIL_TO } from '../env';
-import { SubscriptionFilter } from 'aws-cdk-lib/aws-sns';
+import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import { SES_EMAIL_FROM, SES_EMAIL_TO } from "../env";
 
 export class EDAAppStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
-    
-    const absenceFilter = { exists: false } as any;
 
     const imagesBucket = new s3.Bucket(this, "images", {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
-      publicReadAccess: false,
+      publicReadAccess: false
     });
 
-      // Integration infrastructure
+    const deadLetterQueue = new sqs.Queue(this, "ImagesDLQ");
 
-      const deadLetterQueue = new sqs.Queue(this, "ImagesDLQ", {
+    const imageProcessQueue = new sqs.Queue(this, "img-created-queue", {
+      receiveMessageWaitTime: cdk.Duration.seconds(10),
+      deadLetterQueue: {
+        queue: deadLetterQueue,
+        maxReceiveCount: 2
+      }
+    });
 
-      });
+    const newImageTopic = new sns.Topic(this, "NewImageTopic", {
+      displayName: "New Image topic"
+    });
 
-      const imageProcessQueue = new sqs.Queue(this, "img-created-queue", {
-        receiveMessageWaitTime: cdk.Duration.seconds(10),
-        deadLetterQueue: {
-          queue: deadLetterQueue,
-          maxReceiveCount: 2,  
-        },
-      });
-  
-      const newImageTopic = new sns.Topic(this, "NewImageTopic", {
-        displayName: "New Image topic",
-      }); 
+    const imagesTable = new dynamodb.Table(this, "ImagesTable", {
+      partitionKey: { name: "imageId", type: dynamodb.AttributeType.STRING },
+      removalPolicy: cdk.RemovalPolicy.DESTROY
+    });
 
-      // DynamoDB table
-      const imagesTable = new dynamodb.Table(this, 'ImagesTable', {
-        partitionKey: { name: 'imageId', type: dynamodb.AttributeType.STRING },
-        removalPolicy: cdk.RemovalPolicy.DESTROY,
-      });
-
-  // Lambda functions
-
-  const processImageFn = new lambdanode.NodejsFunction(
-    this,
-    "ProcessImageFn",
-    {
-      runtime: lambda.Runtime.NODEJS_22_X,
+    const processImageFn = new lambdanode.NodejsFunction(this, "ProcessImageFn", {
+      runtime: lambda.Runtime.NODEJS_20_X,
       entry: `${__dirname}/../lambdas/processImage.ts`,
       timeout: cdk.Duration.seconds(15),
       memorySize: 128,
-      environment: {
-        TABLE_NAME: imagesTable.tableName
-      }
-    }
-  );
+      environment: { TABLE_NAME: imagesTable.tableName }
+    });
+    imagesTable.grantWriteData(processImageFn);
+    imagesBucket.grantRead(processImageFn);
 
-  // grant Lambda 
-  imagesTable.grantWriteData(processImageFn);
+    const addMetadataFn = new lambdanode.NodejsFunction(this, "AddMetadataFn", {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      entry: `${__dirname}/../lambdas/addMetadata.ts`,
+      timeout: cdk.Duration.seconds(10),
+      memorySize: 128,
+      environment: { TABLE_NAME: imagesTable.tableName }
+    });
+    imagesTable.grantWriteData(addMetadataFn);
 
-  // add meta data
-  const addMetadataFn = new lambdanode.NodejsFunction(this, 'AddMetadataFn', {
-    runtime: lambda.Runtime.NODEJS_22_X,
-    entry: `${__dirname}/../lambdas/addMetadata.ts`,
-    timeout: cdk.Duration.seconds(10),
-    memorySize: 128,
-    environment: {
-      TABLE_NAME: imagesTable.tableName
-    }
-  });
-  
-  imagesTable.grantWriteData(addMetadataFn);
-
-  // remove invalid image
-  const removeImageFn = new lambdanode.NodejsFunction(this, "RemoveImageFn", {
-    runtime: lambda.Runtime.NODEJS_22_X,
-    entry: `${__dirname}/../lambdas/removeImage.ts`,
-    timeout: cdk.Duration.seconds(15),
-    memorySize: 128,
-    environment: {
-      BUCKET_NAME: imagesBucket.bucketName,
-    },
-  });
-  
-  imagesBucket.grantDelete(removeImageFn);
-
-  removeImageFn.addEventSource(
-    new events.SqsEventSource(deadLetterQueue, {
-      batchSize: 5,
-      maxBatchingWindow: cdk.Duration.seconds(5),
-    })
-  );
-
-  // update status
-  const updateStatusFn = new lambdanode.NodejsFunction(this, 'UpdateStatusFn', {
-    runtime: lambda.Runtime.NODEJS_22_X,
-    entry: `${__dirname}/../lambdas/updateStatus.ts`,
-    timeout: cdk.Duration.seconds(15),
-    memorySize: 256,
-    environment: {
-      TABLE_NAME:  imagesTable.tableName,
-      SES_SENDER:  SES_EMAIL_FROM,
-      SES_RECIPIENT: SES_EMAIL_TO
-  }
-});
-  
-imagesTable.grantReadWriteData(updateStatusFn);
-updateStatusFn.addToRolePolicy(new iam.PolicyStatement({
-  actions: ['ses:SendEmail','ses:SendRawEmail'],
-  resources: ['*'],
-}));
-
-newImageTopic.addSubscription(new subs.LambdaSubscription(updateStatusFn, {
-  filterPolicy: {
-    action: sns.SubscriptionFilter.stringFilter({
-      allowlist: ['status_update']
-    })
-  }
-}));
-  
-  newImageTopic.addSubscription(new subs.LambdaSubscription(addMetadataFn, {
-    filterPolicy: {
-      metadata_type: sns.SubscriptionFilter.stringFilter({
-        allowlist: ['Caption','Date','name'],
+    const removeImageFn = new lambdanode.NodejsFunction(this, "RemoveImageFn", {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      entry: `${__dirname}/../lambdas/removeImage.ts`,
+      timeout: cdk.Duration.seconds(15),
+      memorySize: 128,
+      environment: { BUCKET_NAME: imagesBucket.bucketName }
+    });
+    imagesBucket.grantDelete(removeImageFn);
+    removeImageFn.addEventSource(
+      new events.SqsEventSource(deadLetterQueue, {
+        batchSize: 5,
+        maxBatchingWindow: cdk.Duration.seconds(5)
       })
-    }
-  }));
+    );
 
-  // S3 --> SQS
-  imagesBucket.addEventNotification(
-    s3.EventType.OBJECT_CREATED,
-    new s3n.SnsDestination(newImageTopic)
-  );
+    const updateStatusFn = new lambdanode.NodejsFunction(this, "UpdateStatusFn", {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      entry: `${__dirname}/../lambdas/updateStatus.ts`,
+      timeout: cdk.Duration.seconds(15),
+      memorySize: 256,
+      environment: {
+        TABLE_NAME: imagesTable.tableName,
+        SES_SENDER: SES_EMAIL_FROM,
+        SES_RECIPIENT: SES_EMAIL_TO
+      }
+    });
+    imagesTable.grantReadWriteData(updateStatusFn);
+    updateStatusFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["ses:SendEmail", "ses:SendRawEmail"],
+        resources: ["*"]
+      })
+    );
 
-  newImageTopic.addSubscription(new subs.SqsSubscription(imageProcessQueue, {
-    filterPolicy: {
-      metadata_type: SubscriptionFilter.existsFilter(),
-      action:         SubscriptionFilter.existsFilter(),
-    }
-  }));
-  
+    newImageTopic.addSubscription(
+      new subs.LambdaSubscription(updateStatusFn, {
+        filterPolicy: {
+          action: SubscriptionFilter.stringFilter({ allowlist: ["status_update"] })
+        }
+      })
+    );
 
+    newImageTopic.addSubscription(
+      new subs.LambdaSubscription(addMetadataFn, {
+        filterPolicy: {
+          metadata_type: SubscriptionFilter.stringFilter({
+            allowlist: ["Caption", "Date", "name"]
+          })
+        }
+      })
+    );
 
- // SQS --> Lambda
-  const newImageEventSource = new events.SqsEventSource(imageProcessQueue, {
-    batchSize: 5,
-    maxBatchingWindow: cdk.Duration.seconds(5),
-  });
+    imagesBucket.addEventNotification(
+      s3.EventType.OBJECT_CREATED,
+      new s3n.SnsDestination(newImageTopic)
+    );
 
-  processImageFn.addEventSource(newImageEventSource);
+    newImageTopic.addSubscription(
+      new subs.SqsSubscription(imageProcessQueue)
+    );
 
-  // Permissions
-
-  imagesBucket.grantRead(processImageFn);
-
-  //Add a second queue
-  const mailerQ = new sqs.Queue(this, "mailer-queue", {
-    receiveMessageWaitTime: cdk.Duration.seconds(10),
-  });
-
-  //Add a second lambda functio
-  const mailerFn = new lambdanode.NodejsFunction(this, "mailer-function", {
-    runtime: lambda.Runtime.NODEJS_22_X,
-    memorySize: 1024,
-    timeout: cdk.Duration.seconds(3),
-    entry: `${__dirname}/../lambdas/mailer.ts`,
-  });
-
-  //Make the new queue a subscriber to the SNS topic
-  newImageTopic.addSubscription(new subs.SqsSubscription(mailerQ, {
-    filterPolicy: {
-      metadata_type: SubscriptionFilter.existsFilter(),
-      action:         SubscriptionFilter.existsFilter(),
-    }
-  }));
-  
-
-
-  //Create an event source from the new SQS queue
-  const newImageMailEventSource = new events.SqsEventSource(mailerQ, {
-    batchSize: 5,
-    maxBatchingWindow: cdk.Duration.seconds(5),
-  }); 
-
-  //Make the new event source the trigger for the new lambda function
-  mailerFn.addEventSource(newImageMailEventSource);
-
-  //Give the new lambda function permission to send emails using the SES service
-  mailerFn.addToRolePolicy(
-    new iam.PolicyStatement({
-      effect: iam.Effect.ALLOW,
-      actions: [
-        "ses:SendEmail",
-        "ses:SendRawEmail",
-        "ses:SendTemplatedEmail",
-      ],
-      resources: ["*"],
-    })
-  );
-
-
-    // Output
+    // const imgSub = newImageTopic.addSubscription(
+    //   new subs.SqsSubscription(imageProcessQueue)
+    // );
     
+    // (imgSub.node.defaultChild as sns.CfnSubscription).addOverride(
+    //   'Properties.FilterPolicy',
+    //   {
+    //     metadata_type: [ { exists: false } ],
+    //     action:        [ { exists: false } ]
+    //   }
+    // );
+
+    processImageFn.addEventSource(
+      new events.SqsEventSource(imageProcessQueue, {
+        batchSize: 5,
+        maxBatchingWindow: cdk.Duration.seconds(5)
+      })
+    );
+
+    const mailerQ = new sqs.Queue(this, "mailer-queue", {
+      receiveMessageWaitTime: cdk.Duration.seconds(10)
+    });
+
+    const mailerFn = new lambdanode.NodejsFunction(this, "mailer-function", {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      memorySize: 1024,
+      timeout: cdk.Duration.seconds(3),
+      entry: `${__dirname}/../lambdas/mailer.ts`
+    });
+
+    newImageTopic.addSubscription(
+      new subs.SqsSubscription(mailerQ, {
+        filterPolicy: {
+          action: SubscriptionFilter.stringFilter({ allowlist: ["status_update"] })
+        }
+      })
+    );
+
+    mailerFn.addEventSource(
+      new events.SqsEventSource(mailerQ, {
+        batchSize: 5,
+        maxBatchingWindow: cdk.Duration.seconds(5)
+      })
+    );
+
+    mailerFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["ses:SendEmail", "ses:SendRawEmail", "ses:SendTemplatedEmail"],
+        resources: ["*"]
+      })
+    );
+
     new cdk.CfnOutput(this, "bucketName", {
-      value: imagesBucket.bucketName,
+      value: imagesBucket.bucketName
     });
 
-    new cdk.CfnOutput(this, 'ImagesTableName', {
-      value: imagesTable.tableName,
+    new cdk.CfnOutput(this, "ImagesTableName", {
+      value: imagesTable.tableName
     });
 
-    new cdk.CfnOutput(this, 'AddMetadataFnName', {
+    new cdk.CfnOutput(this, "AddMetadataFnName", {
       value: addMetadataFn.functionName
     });
-    
-    new cdk.CfnOutput(this, 'UpdateStatusFnName', { 
-      value: updateStatusFn.functionName 
-    });
 
+    new cdk.CfnOutput(this, "UpdateStatusFnName", {
+      value: updateStatusFn.functionName
+    });
   }
 }
-
