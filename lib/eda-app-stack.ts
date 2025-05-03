@@ -13,6 +13,7 @@ import { Construct } from "constructs";
 // import * as sqs from 'aws-cdk-lib/aws-sqs';
 
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
+import { SES_EMAIL_FROM, SES_EMAIL_TO, SES_REGION } from '../env';
 
 
 export class EDAAppStack extends cdk.Stack {
@@ -100,6 +101,34 @@ export class EDAAppStack extends cdk.Stack {
       maxBatchingWindow: cdk.Duration.seconds(5),
     })
   );
+
+  // update status
+  const updateStatusFn = new lambdanode.NodejsFunction(this, 'UpdateStatusFn', {
+    runtime: lambda.Runtime.NODEJS_22_X,
+    entry: `${__dirname}/../lambdas/updateStatus.ts`,
+    timeout: cdk.Duration.seconds(15),
+    memorySize: 256,
+    environment: {
+      TABLE_NAME:  imagesTable.tableName,
+      SES_SENDER:  SES_EMAIL_FROM,
+      SES_RECIPIENT: SES_EMAIL_TO,
+      AWS_REGION:  SES_REGION  
+  }
+});
+  
+imagesTable.grantReadWriteData(updateStatusFn);
+updateStatusFn.addToRolePolicy(new iam.PolicyStatement({
+  actions: ['ses:SendEmail','ses:SendRawEmail'],
+  resources: ['*'],
+}));
+
+newImageTopic.addSubscription(new subs.LambdaSubscription(updateStatusFn, {
+  filterPolicy: {
+    action: sns.SubscriptionFilter.stringFilter({
+      allowlist: ['status_update']
+    })
+  }
+}));
   
   newImageTopic.addSubscription(new subs.LambdaSubscription(addMetadataFn, {
     filterPolicy: {
@@ -184,6 +213,10 @@ export class EDAAppStack extends cdk.Stack {
 
     new cdk.CfnOutput(this, 'AddMetadataFnName', {
       value: addMetadataFn.functionName
+    });
+    
+    new cdk.CfnOutput(this, 'UpdateStatusFnName', { 
+      value: updateStatusFn.functionName 
     });
     
   }
