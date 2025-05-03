@@ -13,6 +13,7 @@ import { Construct } from "constructs";
 
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import { SES_EMAIL_FROM, SES_EMAIL_TO } from '../env';
+import { SubscriptionFilter } from 'aws-cdk-lib/aws-sns';
 
 export class EDAAppStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -145,8 +146,8 @@ newImageTopic.addSubscription(new subs.LambdaSubscription(updateStatusFn, {
 
   newImageTopic.addSubscription(new subs.SqsSubscription(imageProcessQueue, {
     filterPolicy: {
-      metadata_type: absenceFilter,
-      action:         absenceFilter,
+      metadata_type: SubscriptionFilter.existsFilter(),
+      action:         SubscriptionFilter.existsFilter(),
     }
   }));
   
@@ -180,8 +181,8 @@ newImageTopic.addSubscription(new subs.LambdaSubscription(updateStatusFn, {
   //Make the new queue a subscriber to the SNS topic
   newImageTopic.addSubscription(new subs.SqsSubscription(mailerQ, {
     filterPolicy: {
-      metadata_type: absenceFilter,
-      action:         absenceFilter,
+      metadata_type: SubscriptionFilter.existsFilter(),
+      action:         SubscriptionFilter.existsFilter(),
     }
   }));
   
