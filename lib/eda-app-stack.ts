@@ -12,6 +12,9 @@ import * as iam from "aws-cdk-lib/aws-iam";
 import { Construct } from "constructs";
 // import * as sqs from 'aws-cdk-lib/aws-sqs';
 
+import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
+
+
 export class EDAAppStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -32,6 +35,12 @@ export class EDAAppStack extends cdk.Stack {
         displayName: "New Image topic",
       }); 
 
+      // DynamoDB table
+      const imagesTable = new dynamodb.Table(this, 'ImagesTable', {
+        partitionKey: { name: 'imageId', type: dynamodb.AttributeType.STRING },
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
+      });
+
   // Lambda functions
 
   const processImageFn = new lambdanode.NodejsFunction(
@@ -42,8 +51,14 @@ export class EDAAppStack extends cdk.Stack {
       entry: `${__dirname}/../lambdas/processImage.ts`,
       timeout: cdk.Duration.seconds(15),
       memorySize: 128,
+      environment: {
+        TABLE_NAME: imagesTable.tableName
+      }
     }
   );
+
+  // grant Lambda 
+  imagesTable.grantWriteData(processImageFn);
 
   // S3 --> SQS
   imagesBucket.addEventNotification(
@@ -113,6 +128,11 @@ export class EDAAppStack extends cdk.Stack {
     new cdk.CfnOutput(this, "bucketName", {
       value: imagesBucket.bucketName,
     });
+
+    new cdk.CfnOutput(this, 'ImagesTableName', {
+      value: imagesTable.tableName,
+    });
+    
   }
 }
 

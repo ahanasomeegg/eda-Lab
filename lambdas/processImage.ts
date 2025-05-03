@@ -1,41 +1,30 @@
-/* eslint-disable import/extensions, import/no-absolute-path */
 import { SQSHandler } from "aws-lambda";
-import {
-  GetObjectCommand,
-  PutObjectCommandInput,
-  GetObjectCommandInput,
-  S3Client,
-  PutObjectCommand,
-} from "@aws-sdk/client-s3";
+import { DynamoDBClient, PutItemCommand } from "@aws-sdk/client-dynamodb";
 
-const s3 = new S3Client();
+const db = new DynamoDBClient({});
+const TABLE = process.env.TABLE_NAME!;
 
 export const handler: SQSHandler = async (event) => {
-  console.log("Event ", JSON.stringify(event));
   for (const record of event.Records) {
-    const recordBody = JSON.parse(record.body);        // Parse SQS message
-    const snsMessage = JSON.parse(recordBody.Message); // Parse SNS message
+    // 解析出 Analyze the S3 event of SNS package
+    const { Message } = JSON.parse(record.body);
+    const sns = JSON.parse(Message);
 
-    if (snsMessage.Records) {
-      console.log("Record body ", JSON.stringify(snsMessage));
-      for (const messageRecord of snsMessage.Records) {
-        const s3e = messageRecord.s3;
-        const srcBucket = s3e.bucket.name;
-        // Object key may have spaces or unicode non-ASCII characters.
-        const srcKey = decodeURIComponent(s3e.object.key.replace(/\+/g, " "));
-        let origimage = null;
-        try {
-          // Download the image from the S3 source bucket.
-          const params: GetObjectCommandInput = {
-            Bucket: srcBucket,
-            Key: srcKey,
-          };
-          origimage = await s3.send(new GetObjectCommand(params));
-          // Process the image ......
-        } catch (error) {
-          console.log(error);
-        }
-      }
+    // Get the key to the S3 object
+    const key = sns.Records?.[0]?.s3?.object?.key;
+    if (!key) continue;
+
+    if (!/\.(jpe?g|png)$/i.test(key)) {
+      console.log(`Invalid extension: ${key}`);
+      throw new Error("Invalid image type");
     }
+
+    await db.send(new PutItemCommand({
+      TableName: TABLE,
+      Item: {
+        imageId: { S: key }
+      }
+    }));
+    console.log(`Logged new image ${key}`);
   }
 };
