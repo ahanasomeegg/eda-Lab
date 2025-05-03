@@ -57,3 +57,4 @@ export const handler: SNSHandler = async (event) => {
     console.log(`Status update email sent for ${id}`);
   }
 };
+

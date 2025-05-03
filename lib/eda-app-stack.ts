@@ -10,15 +10,15 @@ import * as subs from "aws-cdk-lib/aws-sns-subscriptions";
 import * as iam from "aws-cdk-lib/aws-iam";
 
 import { Construct } from "constructs";
-// import * as sqs from 'aws-cdk-lib/aws-sqs';
 
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
-import { SES_EMAIL_FROM, SES_EMAIL_TO, SES_REGION } from '../env';
-
+import { SES_EMAIL_FROM, SES_EMAIL_TO } from '../env';
 
 export class EDAAppStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
+    
+    const absenceFilter = { exists: false } as any;
 
     const imagesBucket = new s3.Bucket(this, "images", {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
@@ -143,9 +143,13 @@ newImageTopic.addSubscription(new subs.LambdaSubscription(updateStatusFn, {
     new s3n.SnsDestination(newImageTopic)
   );
 
-  newImageTopic.addSubscription(
-    new subs.SqsSubscription(imageProcessQueue)
-  );
+  newImageTopic.addSubscription(new subs.SqsSubscription(imageProcessQueue, {
+    filterPolicy: {
+      metadata_type: absenceFilter,
+      action:         absenceFilter,
+    }
+  }));
+  
 
 
  // SQS --> Lambda
@@ -174,7 +178,13 @@ newImageTopic.addSubscription(new subs.LambdaSubscription(updateStatusFn, {
   });
 
   //Make the new queue a subscriber to the SNS topic
-  newImageTopic.addSubscription(new subs.SqsSubscription(mailerQ));
+  newImageTopic.addSubscription(new subs.SqsSubscription(mailerQ, {
+    filterPolicy: {
+      metadata_type: absenceFilter,
+      action:         absenceFilter,
+    }
+  }));
+  
 
 
   //Create an event source from the new SQS queue
