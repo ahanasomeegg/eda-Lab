@@ -111,8 +111,7 @@ export class EDAAppStack extends cdk.Stack {
     environment: {
       TABLE_NAME:  imagesTable.tableName,
       SES_SENDER:  SES_EMAIL_FROM,
-      SES_RECIPIENT: SES_EMAIL_TO,
-      AWS_REGION:  SES_REGION  
+      SES_RECIPIENT: SES_EMAIL_TO
   }
 });
   
@@ -218,7 +217,7 @@ newImageTopic.addSubscription(new subs.LambdaSubscription(updateStatusFn, {
     new cdk.CfnOutput(this, 'UpdateStatusFnName', { 
       value: updateStatusFn.functionName 
     });
-    
+
   }
 }
 
