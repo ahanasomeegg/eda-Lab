@@ -80,6 +80,26 @@ export class EDAAppStack extends cdk.Stack {
   });
   
   imagesTable.grantWriteData(addMetadataFn);
+
+  // remove invalid image
+  const removeImageFn = new lambdanode.NodejsFunction(this, "RemoveImageFn", {
+    runtime: lambda.Runtime.NODEJS_22_X,
+    entry: `${__dirname}/../lambdas/removeImage.ts`,
+    timeout: cdk.Duration.seconds(15),
+    memorySize: 128,
+    environment: {
+      BUCKET_NAME: imagesBucket.bucketName,
+    },
+  });
+  
+  imagesBucket.grantDelete(removeImageFn);
+
+  removeImageFn.addEventSource(
+    new events.SqsEventSource(deadLetterQueue, {
+      batchSize: 5,
+      maxBatchingWindow: cdk.Duration.seconds(5),
+    })
+  );
   
   newImageTopic.addSubscription(new subs.LambdaSubscription(addMetadataFn, {
     filterPolicy: {
