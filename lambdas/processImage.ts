@@ -6,7 +6,7 @@ const TABLE = process.env.TABLE_NAME!;
 
 export const handler: SQSHandler = async (event) => {
   for (const record of event.Records) {
-    // 解析出 Analyze the S3 event of SNS package
+    // Analyze the S3 event of SNS package
     const { Message } = JSON.parse(record.body);
     const sns = JSON.parse(Message);
 

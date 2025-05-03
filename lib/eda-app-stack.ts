@@ -60,6 +60,27 @@ export class EDAAppStack extends cdk.Stack {
   // grant Lambda 
   imagesTable.grantWriteData(processImageFn);
 
+  // add meta data
+  const addMetadataFn = new lambdanode.NodejsFunction(this, 'AddMetadataFn', {
+    runtime: lambda.Runtime.NODEJS_22_X,
+    entry: `${__dirname}/../lambdas/addMetadata.ts`,
+    timeout: cdk.Duration.seconds(10),
+    memorySize: 128,
+    environment: {
+      TABLE_NAME: imagesTable.tableName
+    }
+  });
+  
+  imagesTable.grantWriteData(addMetadataFn);
+  
+  newImageTopic.addSubscription(new subs.LambdaSubscription(addMetadataFn, {
+    filterPolicy: {
+      metadata_type: sns.SubscriptionFilter.stringFilter({
+        allowlist: ['Caption','Date','name'],
+      })
+    }
+  }));
+
   // S3 --> SQS
   imagesBucket.addEventNotification(
     s3.EventType.OBJECT_CREATED,
@@ -90,7 +111,7 @@ export class EDAAppStack extends cdk.Stack {
 
   //Add a second lambda functio
   const mailerFn = new lambdanode.NodejsFunction(this, "mailer-function", {
-    runtime: lambda.Runtime.NODEJS_16_X,
+    runtime: lambda.Runtime.NODEJS_22_X,
     memorySize: 1024,
     timeout: cdk.Duration.seconds(3),
     entry: `${__dirname}/../lambdas/mailer.ts`,
@@ -131,6 +152,10 @@ export class EDAAppStack extends cdk.Stack {
 
     new cdk.CfnOutput(this, 'ImagesTableName', {
       value: imagesTable.tableName,
+    });
+
+    new cdk.CfnOutput(this, 'AddMetadataFnName', {
+      value: addMetadataFn.functionName
     });
     
   }
